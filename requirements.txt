@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-dotenv
+pydantic
+openai
+numpy
+sqlalchemy
+psycopg2-binary
+pgvector
+pymupdf
+pytest
+httpx
+ruff

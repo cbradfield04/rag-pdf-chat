@@ -1,0 +1,28 @@
+# ---- secrets ----
+.env
+.env.*
+*.key
+
+# ---- python ----
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.dist/
+build/
+dist/
+
+# ---- tooling ----
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- OS / editor ----
+.DS_Store
+.vscode/
+.idea/
