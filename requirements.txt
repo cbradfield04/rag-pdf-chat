@@ -11,3 +11,4 @@ pymupdf
 pytest
 httpx
 ruff
+python-multipart
