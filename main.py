@@ -14,11 +14,8 @@ from sqlalchemy.engine import Engine
 
 load_dotenv()
 
-api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    raise RuntimeError("OPENAI_API_KEY not found in .env")
-
-client = OpenAI(api_key=api_key)
+api_key = os.getenv("OPENAI_API_KEY", "")
+client = OpenAI(api_key=api_key) if api_key else None
 
 EMBED_MODEL = "text-embedding-3-large"
 GEN_MODEL = "gpt-4o-mini"
@@ -64,6 +61,8 @@ class AskRequest(BaseModel):
 
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
+    if client is None:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured.")
     try:
         resp = client.embeddings.create(model=EMBED_MODEL, input=texts)
         return [item.embedding for item in resp.data]
@@ -330,6 +329,9 @@ def ask(req: AskRequest):
         f"QUESTION:\n{req.question}\n\n"
         f"CONTEXT:\n{context}\n"
     )
+
+    if client is None:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured.")
 
     try:
         resp = client.responses.create(model=GEN_MODEL, input=prompt)
