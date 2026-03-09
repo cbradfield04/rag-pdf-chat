@@ -20,11 +20,13 @@ client = OpenAI(api_key=api_key) if api_key else None
 EMBED_MODEL = "text-embedding-3-large"
 GEN_MODEL = "gpt-4o-mini"
 
-DB_URL = os.getenv("DATABASE_URL")
-if not DB_URL:
-    raise RuntimeError("DATABASE_URL not found in .env")
+DB_URL = os.getenv("DATABASE_URL", "")
+engine: Optional[Engine] = create_engine(DB_URL, future=True) if DB_URL else None
 
-engine: Engine = create_engine(DB_URL, future=True)
+def require_db() -> Engine:
+    if engine is None:
+        raise HTTPException(status_code=500, detail="DATABASE_URL not configured.")
+    return engine
 
 app = FastAPI(
     title="RAG Doc Chat (OpenAI + FastAPI + pgvector)",
@@ -34,7 +36,6 @@ app = FastAPI(
         "filter": True,
     },
 )
-
 
 @app.get("/", response_class=HTMLResponse)
 def root():
@@ -47,18 +48,15 @@ def root():
     </ul>
     """
 
-
 class IngestRequest(BaseModel):
     title: str = "Untitled"
     source: str
     chunks: List[str]
 
-
 class AskRequest(BaseModel):
     question: str
     top_k: int = 5
     document_id: Optional[int] = None
-
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
     if client is None:
@@ -68,7 +66,6 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
         return [item.embedding for item in resp.data]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
-
 
 def chunk_text(text: str, chunk_size: int = 1200, overlap: int = 200) -> List[str]:
     text = re.sub(r"\s+", " ", text).strip()
@@ -84,25 +81,22 @@ def chunk_text(text: str, chunk_size: int = 1200, overlap: int = 200) -> List[st
         start = max(0, end - overlap)
     return chunks
 
-
 def snippet(text_value: str, limit: int = 220) -> str:
     clean = re.sub(r"\s+", " ", text_value).strip()
     if len(clean) <= limit:
         return clean
     return clean[:limit].rstrip() + "…"
 
-
 @app.get("/health")
 def health():
-    with engine.begin() as conn:
+    with require_db().begin() as conn:
         docs = conn.execute(text("SELECT COUNT(*) FROM documents")).scalar_one()
         chunks = conn.execute(text("SELECT COUNT(*) FROM chunks")).scalar_one()
     return {"ok": True, "documents": docs, "chunks": chunks}
 
-
 @app.get("/documents")
 def list_documents():
-    with engine.begin() as conn:
+    with require_db().begin() as conn:
         rows = conn.execute(
             text(
                 """
@@ -131,10 +125,9 @@ def list_documents():
         for r in rows
     ]
 
-
 @app.get("/documents/{doc_id}")
 def get_document(doc_id: int):
-    with engine.begin() as conn:
+    with require_db().begin() as conn:
         doc = conn.execute(
             text(
                 """
@@ -162,10 +155,9 @@ def get_document(doc_id: int):
         "chunk_count": int(chunk_count),
     }
 
-
 @app.delete("/documents/{doc_id}")
 def delete_document(doc_id: int):
-    with engine.begin() as conn:
+    with require_db().begin() as conn:
         res = conn.execute(
             text("DELETE FROM documents WHERE id = :doc_id"),
             {"doc_id": doc_id},
@@ -174,7 +166,6 @@ def delete_document(doc_id: int):
             raise HTTPException(status_code=404, detail="Document not found.")
     return {"ok": True, "deleted_document_id": doc_id}
 
-
 @app.post("/ingest")
 def ingest(req: IngestRequest):
     if not req.chunks:
@@ -182,7 +173,7 @@ def ingest(req: IngestRequest):
 
     embeddings = embed_texts(req.chunks)
 
-    with engine.begin() as conn:
+    with require_db().begin() as conn:
         doc_id = conn.execute(
             text(
                 "INSERT INTO documents (title, source) VALUES (:title, :source) RETURNING id"
@@ -208,7 +199,6 @@ def ingest(req: IngestRequest):
             )
 
     return {"ok": True, "document_id": doc_id, "chunks_indexed": len(req.chunks)}
-
 
 @app.post("/upload_pdf")
 async def upload_pdf(
@@ -240,7 +230,7 @@ async def upload_pdf(
 
     embeddings = embed_texts(chunks)
 
-    with engine.begin() as conn:
+    with require_db().begin() as conn:
         doc_id = conn.execute(
             text(
                 "INSERT INTO documents (title, source) VALUES (:title, :source) RETURNING id"
@@ -272,12 +262,11 @@ async def upload_pdf(
         "filename": file.filename,
     }
 
-
 def retrieve(question: str, top_k: int, document_id: Optional[int] = None):
     q_emb = embed_texts([question])[0]
     q_emb_str = "[" + ",".join(str(float(x)) for x in q_emb) + "]"
 
-    with engine.begin() as conn:
+    with require_db().begin() as conn:
         if document_id is None:
             rows = conn.execute(
                 text(
@@ -307,7 +296,6 @@ def retrieve(question: str, top_k: int, document_id: Optional[int] = None):
             ).all()
 
     return [{"chunk_id": r[0], "source": r[1], "text": r[2]} for r in rows]
-
 
 @app.post("/ask")
 def ask(req: AskRequest):
